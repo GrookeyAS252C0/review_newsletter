@@ -12,6 +12,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# セッション状態の初期化
+if 'search_query' not in st.session_state:
+    st.session_state.search_query = ""
+if 'show_search_results' not in st.session_state:
+    st.session_state.show_search_results = False
+if 'expanded_articles' not in st.session_state:
+    st.session_state.expanded_articles = set()
+
 # カスタムCSS
 st.markdown("""
 <style>
@@ -258,17 +266,28 @@ def main():
     """, unsafe_allow_html=True)
     
     # 検索機能
-    col_search1, col_search2 = st.columns([3, 1])
+    col_search1, col_search2, col_search3 = st.columns([3, 1, 1])
     
     with col_search1:
         search_query = st.text_input(
             "検索キーワードを入力してください",
+            value=st.session_state.search_query,
             placeholder="例：入試、進路、英検、文化祭、日本大学など...",
-            help="「今日の学校案内」セクションの内容から検索します"
+            help="「今日の学校案内」セクションの内容から検索します",
+            key="search_input"
         )
     
     with col_search2:
-        search_button = st.button("🔍 検索", type="primary")
+        if st.button("🔍 検索", type="primary"):
+            st.session_state.search_query = search_query
+            st.session_state.show_search_results = True
+            st.session_state.expanded_articles = set()
+    
+    with col_search3:
+        if st.button("🏠 全記事表示", type="secondary"):
+            st.session_state.search_query = ""
+            st.session_state.show_search_results = False
+            st.session_state.expanded_articles = set()
     
     # 人気キーワード表示
     popular_keywords = extract_popular_keywords(df)
@@ -285,8 +304,10 @@ def main():
         col_idx = i % 6
         with keyword_cols[col_idx]:
             if st.button(keyword, key=f"keyword_{i}", help=f"「{keyword}」で検索"):
-                search_query = keyword
-                search_button = True
+                st.session_state.search_query = keyword
+                st.session_state.show_search_results = True
+                st.session_state.expanded_articles = set()
+                st.rerun()
     
     # サイドバー
     with st.sidebar:
@@ -312,8 +333,8 @@ def main():
         st.metric("配信期間", "2025年4月")
         
         # 検索結果統計
-        if search_query and search_button:
-            search_results = search_in_guide_content(df, search_query)
+        if st.session_state.show_search_results and st.session_state.search_query:
+            search_results = search_in_guide_content(df, st.session_state.search_query)
             st.metric("検索結果", f"{len(search_results)}件")
         
         # テーマ別記事数
@@ -323,13 +344,15 @@ def main():
             st.write(f"**{theme}**: {count}件")
     
     # 検索結果表示
-    if search_query and search_button:
-        search_results = search_in_guide_content(df, search_query)
+    if st.session_state.show_search_results and st.session_state.search_query:
+        search_results = search_in_guide_content(df, st.session_state.search_query)
         
         if len(search_results) > 0:
-            st.markdown(f"### 🎯 「{search_query}」の検索結果 ({len(search_results)}件)")
+            st.markdown(f"### 🎯 「{st.session_state.search_query}」の検索結果 ({len(search_results)}件)")
             
-            for _, result in search_results.iterrows():
+            for idx, result in search_results.iterrows():
+                article_key = f"search_{result['日付表示']}"
+                
                 st.markdown(f"""
                 <div class="search-result">
                     <strong>📅 {result['日付表示']}</strong> - 
@@ -337,13 +360,29 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                with st.expander(f"📖 {result['日付表示']} の学校案内内容", expanded=False):
+                # expanderの状態をセッション状態で管理
+                expanded = article_key in st.session_state.expanded_articles
+                
+                with st.expander(f"📖 {result['日付表示']} の学校案内内容", expanded=expanded):
                     st.markdown(f"""
                     <div class="content-text">{result['ハイライト内容']}</div>
                     """, unsafe_allow_html=True)
                     
-                    # 元の記事へのリンク
-                    if st.button(f"📄 完全な記事を見る", key=f"full_{result['日付表示']}"):
+                    # トグルボタンで完全な記事を表示/非表示
+                    show_full_key = f"show_full_{article_key}"
+                    
+                    col1, col2 = st.columns([1, 3])
+                    with col1:
+                        if st.button(f"📄 完全な記事を{'隠す' if show_full_key in st.session_state.expanded_articles else '見る'}", 
+                                   key=f"toggle_{article_key}"):
+                            if show_full_key in st.session_state.expanded_articles:
+                                st.session_state.expanded_articles.remove(show_full_key)
+                            else:
+                                st.session_state.expanded_articles.add(show_full_key)
+                            st.rerun()
+                    
+                    # 完全な記事を表示
+                    if show_full_key in st.session_state.expanded_articles:
                         content_display = result['本文'].replace('\\r\\n', '\n').replace('\n', '<br>')
                         st.markdown(f"""
                         <div class="article-card">
@@ -354,10 +393,10 @@ def main():
                         """, unsafe_allow_html=True)
             
         else:
-            st.warning(f"「{search_query}」に関する情報が見つかりませんでした。別のキーワードをお試しください。")
+            st.warning(f"「{st.session_state.search_query}」に関する情報が見つかりませんでした。別のキーワードをお試しください。")
     
     # メインコンテンツ（テーマ別表示）
-    if not (search_query and search_button):
+    else:
         # ナビゲーションボタン
         if selected_theme != 'すべて':
             col_nav1, col_nav2, col_nav3 = st.columns([1, 2, 1])
@@ -366,51 +405,50 @@ def main():
                     selected_theme = 'すべて'
                     st.rerun()
         
-        # メインコンテンツエリア
-            # フィルタリング
-            if selected_theme == 'すべて':
-                filtered_df = df
-                st.markdown("### 📰 全記事一覧")
-            else:
-                filtered_df = df[df['テーマ'] == selected_theme]
-                st.markdown(f"### 📰 {selected_theme} の記事")
+        # フィルタリング
+        if selected_theme == 'すべて':
+            filtered_df = df
+            st.markdown("### 📰 全記事一覧")
+        else:
+            filtered_df = df[df['テーマ'] == selected_theme]
+            st.markdown(f"### 📰 {selected_theme} の記事")
+        
+        # 記事表示
+        if len(filtered_df) > 0:
+            # 日付順でソート
+            filtered_df = filtered_df.sort_values(['月', '日'])
             
-            # 記事表示
-            if len(filtered_df) > 0:
-                # 日付順でソート
-                filtered_df = filtered_df.sort_values(['月', '日'])
-                
-                for _, row in filtered_df.iterrows():
-                    with st.container():
+            for _, row in filtered_df.iterrows():
+                with st.container():
+                    st.markdown(f"""
+                    <div class="article-card">
+                        <div class="date-badge">{row['日付表示']}</div>
+                        <span class="theme-badge">{row['テーマ']}</span>
+                        <h3>{row['タイトル']}</h3>
+                    """, unsafe_allow_html=True)
+                    
+                    # 今日の学校案内セクションのプレビュー
+                    theme_info, guide_content = extract_school_guide_content(row['本文'])
+                    if guide_content:
+                        st.markdown(f"**🎯 {theme_info}**")
+                        preview = guide_content[:150] + "..." if len(guide_content) > 150 else guide_content
+                        st.markdown(f"*{preview}*")
+                    
+                    # 展開可能な本文
+                    with st.expander("📖 記事を読む", expanded=False):
+                        # 本文を見やすく整形
+                        content = row['本文'].replace('\\r\\n', '\n')
+                        content = content.replace('-----', '━━━━━━━━━━━━━━━━━━━━')
+                        
+                        content_html = content.replace('\n', '<br>')
                         st.markdown(f"""
-                        <div class="article-card">
-                            <div class="date-badge">{row['日付表示']}</div>
-                            <span class="theme-badge">{row['テーマ']}</span>
-                            <h3>{row['タイトル']}</h3>
+                        <div class="content-text">{content_html}</div>
                         """, unsafe_allow_html=True)
-                        
-                        # 今日の学校案内セクションのプレビュー
-                        theme_info, guide_content = extract_school_guide_content(row['本文'])
-                        if guide_content:
-                            st.markdown(f"**🎯 {theme_info}**")
-                            preview = guide_content[:150] + "..." if len(guide_content) > 150 else guide_content
-                            st.markdown(f"*{preview}*")
-                        
-                        # 展開可能な本文
-                        with st.expander("📖 記事を読む", expanded=False):
-                            # 本文を見やすく整形
-                            content = row['本文'].replace('\\r\\n', '\n')
-                            content = content.replace('-----', '━━━━━━━━━━━━━━━━━━━━')
-                            
-                            content_html = content.replace('\n', '<br>')
-                            st.markdown(f"""
-                            <div class="content-text">{content_html}</div>
-                            """, unsafe_allow_html=True)
-                        
-                        st.markdown("</div>", unsafe_allow_html=True)
-                        st.markdown("---")
-            else:
-                st.info("選択されたテーマの記事が見つかりませんでした。")
+                    
+                    st.markdown("</div>", unsafe_allow_html=True)
+                    st.markdown("---")
+        else:
+            st.info("選択されたテーマの記事が見つかりませんでした。")
     
     # フッター
     st.markdown("---")
